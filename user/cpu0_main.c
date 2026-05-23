@@ -21,11 +21,11 @@ int core0_main(void)
 #if !RACE_MODE
     tft180_set_font(TFT180_6X8_FONT);
     tft180_set_dir(TFT180_CROSSWISE);
-    tft180_init();
+    tft180_init();///////
 #endif
 
     /* 初始化摄像头 */
-    mt9v03x_init();
+    mt9v03x_init();/////
     mt9v03x_set_exposure_time((uint16)cam_exposure);
     //gpio_init(P20_8, GPO, 0, GPO_PUSH_PULL);
     //gpio_init(P20_9, GPO, 0, GPO_PUSH_PULL);
