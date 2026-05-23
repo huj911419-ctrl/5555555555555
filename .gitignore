@@ -1,0 +1,15 @@
+# Ignore everything
+*
+
+# But not these directories
+!/user/
+!/code/
+!/code/*
+
+# Ignore build output and common generated files
+*.o
+*.d
+*.exe
+*.out
+*.hex
+*.bin

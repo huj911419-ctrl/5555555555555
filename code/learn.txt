@@ -1,0 +1,327 @@
+出参数: 图像二值化阈值
+* 备  注: 无
+******************************************************************************/
+uint8 Ostu(uint8 index[MT9V03X_H][MT9V03X_W])
+{
+    uint8  threshold;
+    imgsize = MT9V03X_W * MT9V03X_H;    // 获取总的图像像素个数
+    uint8  images_value_temp;            // 中间变量暂时存储
+
+    float sumPK = 0;                     // 概率累计和 中间暂存变量
+    float sumMK = 0;                     // 灰度值累加均值  中间暂存变量
+    float var   = 0;
+    float vartemp = 0;
+
+    // 清空统计数组
+    for(int i = 0; i < GrayScale; i++)
+    {
+        hist[i] = 0;
+        P[i]    = 0.0f;
+        PK[i]   = 0.0f;
+        MK[i]   = 0.0f;
+    }
+
+    // 构建灰度直方图
+    for(int i = 0; i < MT9V03X_H; i++)
+    {
+        for(int j = 0; j < MT9V03X_W; j++)
+        {
+            images_value_temp = index[i][j];
+            hist[images_value_temp]++;
+        }
+    }
+
+    // 计算各灰度级出现概率
+    for(int i = 0; i < GrayScale; i++)
+    {
+        P[i] = (float)hist[i] / imgsize;
+    }
+
+    // 计算累积概率 PK 与累积均值 MK
+    PK[0] = P[0];
+    MK[0] = 0.0f;
+    for(int i = 1; i < GrayScale; i++)
+    {
+        PK[i] = PK[i-1] + P[i];
+        MK[i] = MK[i-1] + (float)i * P[i];
+    }
+
+    // 全局灰度均值
+    float MG = MK[GrayScale - 1];
+
+    // 遍历所有灰度级，求最大类间方差对应的阈值
+    threshold = 0;
+    var       = 0.0f;
+    for(int i = 0; i < GrayScale; i++)
+    {
+        if(PK[i] > 1e-6f && PK[i] < 1.0f - 1e-6f)
+        {
+            vartemp = (MG * PK[i] - MK[i]) * (MG * PK[i] - MK[i])
+                      / (PK[i] * (1.0f - PK[i]));
+            if(vartemp > var)
+            {
+                var       = vartemp;
+                threshold = (uint8)i;
+            }
+        }
+    }
+
+    return threshold;
+}
+
+
+/******************************************************************************
+* 函数功能: 对图像以指定阈值进行二值化，结果存入 image[][]
+* 函数名称: void set_image_twovalues(uint8 value)
+* 输入参数: value — 二值化阈值
+* 输出参数: 无
+* 备  注: 高于阈值为白(255)，低于等于阈值为黑(0)
+******************************************************************************/
+void set_image_twovalues(uint8 value)
+{
+    for(int i = 0; i < MT9V03X_H; i++)
+    {
+        for(int j = 0; j < MT9V03X_W; j++)
+        {
+            // 备份原始灰度图
+            base_image[i][j] = mt9v03x_image[i][j];
+
+            // 二值化
+            if(mt9v03x_image[i][j] > value)
+                image[i][j] = 255;
+            else
+                image[i][j] = 0;
+        }
+    }
+}
+
+
+/******************************************************************************
+* 函数功能: 在 jidian_search_line 行扫描，确定左右边线生长基点
+* 函数名称: void find_jidian(uint8 index[MT9V03X_H][MT9V03X_W])
+* 输入参数: 二值化后图像数组
+* 输出参数: 无
+* 备  注: 以 MID_W(93) 为中心，分别向右/左找第一个黑像素作为基点
+******************************************************************************/
+void find_jidian(uint8 index[MT9V03X_H][MT9V03X_W])
+{
+    int row = jidian_search_line;   // 第120行
+    uint8 found;
+
+    /* ---- 左边线基点：从中心向左搜索，找第一个黑色像素 ---- */
+    found = 0;
+    for(int j = MID_W; j >= 0; j--)
+    {
+        if(index[row][j] == 0)
+        {
+            left_jidian = (uint8)j;
+            found = 1;
+            break;
+        }
+    }
+    if(!found)
+        left_jidian = 0;
+
+    /* ---- 右边线基点：从中心向右搜索，找第一个黑色像素 ---- */
+    found = 0;
+    for(int j = MID_W; j < MT9V03X_W; j++)
+    {
+        if(index[row][j] == 0)
+        {
+            right_jidian = (uint8)j;
+            found = 1;
+            break;
+        }
+    }
+    if(!found)
+        right_jidian = MT9V03X_W - 1;
+}
+
+
+/******************************************************************************
+* 函数功能: 图像处理总调度（大津法二值化 + 基点定位 + 生长法提取边线）
+* 函数名称: void image_deal(uint8 index[MT9V03X_H][MT9V03X_W])
+* 输入参数: 原始灰度图像数组
+* 输出参数: 无
+* 备  注: 主循环中图像就绪后调用
+******************************************************************************/
+void image_deal(uint8 index[MT9V03X_H][MT9V03X_W])
+{
+    uint8 left_temp, right_temp;
+
+    /* Step1: 大津法自适应求阈值并二值化 */
+    img_threshold = Ostu(index);
+    set_image_twovalues(img_threshold);
+
+    /* Step2: 确定生长基点 */
+    find_jidian(image);
+
+    /* Step3: 生长法逐行提取左右边线及中线
+     *  search_start_line = 120（底部）→ search_end_line = 30（顶部）
+     *  每行在上一行基点的基础上：
+     *    左边线：先向右搜 left_line_right_scarch(10) 列，再向左搜 left_line_left_scarch(5) 列
+     *    右边线：先向左搜 right_line_left_scarch(10) 列，再向右搜 right_line_right_scarch(5) 列
+     */
+    left_temp  = left_jidian;
+    right_temp = right_jidian;
+
+    for(int i = search_start_line; i >= search_end_line; i--)
+    {
+        uint8 l_found = 0, r_found = 0;
+        int   j;
+
+        /* ---- 左边线搜索 ---- */
+        // 先向右 left_line_right_scarch 列
+        for(j = (int)left_temp;
+            j <= (int)left_temp + left_line_right_scarch && j < MT9V03X_W;
+            j++)
+        {
+            if(image[i][j] == 0)
+            {
+                left_line_list[i] = (uint8)j;
+                left_temp         = (uint8)j;
+                l_found           = 1;
+                break;
+            }
+        }
+        // 若向右未找到，再向左 left_line_left_scarch 列
+        if(!l_found)
+        {
+            for(j = (int)left_temp - 1;
+                j >= (int)left_temp - left_line_left_scarch && j >= 0;
+                j--)
+            {
+                if(image[i][j] == 0)
+                {
+                    left_line_list[i] = (uint8)j;
+                    left_temp         = (uint8)j;
+                    l_found           = 1;
+                    break;
+                }
+            }
+        }
+        if(!l_found)
+        {
+            left_line_list[i] = left_temp;   // 保持上一行基点
+        }
+
+        /* ---- 右边线搜索 ---- */
+        // 先向左 right_line_left_scarch 列
+        for(j = (int)right_temp;
+            j >= (int)right_temp - right_line_left_scarch && j >= 0;
+            j--)
+        {
+            if(image[i][j] == 0)
+            {
+                right_line_list[i] = (uint8)j;
+                right_temp         = (uint8)j;
+                r_found            = 1;
+                break;
+            }
+        }
+        // 若向左未找到，再向右 right_line_right_scarch 列
+        if(!r_found)
+        {
+            for(j = (int)right_temp + 1;
+                j <= (int)right_temp + right_line_right_scarch && j < MT9V03X_W;
+                j++)
+            {
+                if(image[i][j] == 0)
+                {
+                    right_line_list[i] = (uint8)j;
+                    right_temp         = (uint8)j;
+                    r_found            = 1;
+                    break;
+                }
+            }
+        }
+        if(!r_found)
+        {
+            right_line_list[i] = right_temp;  // 保持上一行基点
+        }
+
+        /* ---- 中线 = 左右均值 ---- */
+        mid_line_list[i] = (left_line_list[i] + right_line_list[i]) / 2;
+
+
+
+
+
+
+
+
+
+=========================================================================================================================================================================================
+                                             判断直角主循环里面写的办法
+
+        while(TRUE)
+{
+    while(!mt9v03x_finish_flag);
+    mt9v03x_finish_flag = 0;
+
+    track_fusion_update();
+
+    uint8 corner = detect_corner();   // 0=正常 1=右转 2=左转
+
+    if (corner == 0)
+    {
+        pid_update(g_tf.error);       // 正常循迹，你来写
+    }
+    else if (corner == 1)
+    {
+        // 直角右转，你来写
+    }
+    else if (corner == 2)
+    {
+        // 直角左转，你来写
+    }
+
+    draw_line();
+}
+```
+
+---
+
+## 为什么只看底部行
+```
+车还没到直角：
+    底部行  左边界正常  右边界正常  ← detect_corner 看这里，正常，不触发
+    顶部行  右边界消失              ← 不看这里
+
+车到了直角：
+    底部行  左边界正常  右边界消失  ← detect_corner 看这里，触发！
+    顶部行  右边界消失
+=========================================================================================================================================================================================
+
+
+
+
+pid主函数调用
+
+#include "small_driver_uart_control.h"
+#include "line_follow.h"
+
+int main(void)
+{
+    // ... 其他外设初始化 ...
+
+    small_driver_uart_init();   // 串口驱动初始化（含编码器速度请求）
+    line_follow_init();         // 循迹模块初始化
+
+    while(1)
+    {
+        // 摄像头图像处理（你已有的中线提取）
+        // center_line[] 是你提取好的每行中线坐标
+        
+        line_follow_control(center_line, IMG_H);  // 放主循环或定时器
+        
+        systick_delay_ms(10);   // 建议 10ms 控制周期
+    }
+}
+
+串口中断中调用回掉
+// isr.c 或 interrupt 配置处
+void UART_X_IRQHandler(void)   // 换成你实际的串口中断函数名
+{
+    uart_control_callback();    // 解析编码器速度数据
+}
