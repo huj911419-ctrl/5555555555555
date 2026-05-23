@@ -15,7 +15,7 @@ int core0_main(void)
     clock_init();
 
     /* 初始化调试串口 */
-    debug_init();
+    debug_init();/////////
 
     /* 配置显示字体和方向 */
 #if !RACE_MODE
